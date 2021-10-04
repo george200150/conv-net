@@ -70,7 +70,7 @@ def conv(image, label, params, conv_s, pool_f, pool_s):
     dfc = params[2].T.dot(dz)  # loss gradients of fully-connected layer (pooling layer)
     dpool = dfc.reshape(pooled.shape)  # reshape fully connected into dimensions of pooling layer
 
-    dconv2 = maxpoolBackward(dpool, conv2, pool_f,
+    dconv2, _, _ = maxpoolBackward(dpool, conv2, pool_f,
                              pool_s)  # backprop through the max-pooling layer(only neurons with highest activation in window get updated)
     dconv2[conv2 <= 0] = 0  # backpropagate through ReLU
 

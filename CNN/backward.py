@@ -6,8 +6,6 @@ Version: 1.0
 Date: June 12th, 2018
 """
 
-import numpy as np
-
 from CNN.utils import *
 
 
@@ -25,8 +23,12 @@ def convolutionBackward(dconv_prev, conv_in, filt, s):
     dout = np.zeros(conv_in.shape)
     dfilt = np.zeros(filt.shape)
     dbias = np.zeros((n_f, 1))
-    dout, dfilt, dbias = conv_bkwd(conv_in, dbias, dconv_prev, dfilt, dout, f, filt, n_f, orig_dim, s)
+    param_dict = {"conv_in": conv_in, "dbias": dbias, "dconv_prev": dconv_prev, "dfilt": dfilt, "dout": dout,
+                  "f": f, "filt": filt, "n_c": n_f, "orig_dim": orig_dim, "s": s}  # TODO: refactor keys... ("n_c": n_f)
+    dict_out = conv_bkwd(param_dict, conv_bkwd_xtract)
+    dout, dfilt, dbias = dict_out["dout"], dict_out["dfilt"], dict_out["dbias"]
     return dout, dfilt, dbias
+
 
 def maxpoolBackward(dpool, orig, f, s):
     """
@@ -36,49 +38,75 @@ def maxpoolBackward(dpool, orig, f, s):
 
     dout = np.zeros(orig.shape)
 
-    dout = pool_bkwd(dout, dpool, f, n_c, orig, orig_dim, s)
-    return dout
+    dict_in = {"dout": dout, "dconv_prev": dpool, "f": f, "n_c": n_c, "conv_in": orig, "orig_dim": orig_dim, "s": s, "dfilt": None, "dbias": None}
+    dict_out = pool_bkwd(dict_in, poo_bkwd_xtract)
+    dout, dfilt, dbias = dict_out["dout"], dict_out["dfilt"], dict_out["dbias"]
+    return dout, dfilt, dbias
 
 
-def conv_bkwd(conv_in, dbias, dconv_prev, dfilt, dout, f, filt, n_f, orig_dim, s):
-    for curr_f in range(n_f):
+def conv_bkwd(param_dict, bkwd_op):
+    f = param_dict["f"]
+    orig_dim = param_dict["orig_dim"]
+    s = param_dict["s"]
+
+    for curr_c in range(param_dict["n_c"]):
         # loop through all filters
         curr_y = out_y = 0
         while curr_y + f <= orig_dim:
             curr_x = out_x = 0
             while curr_x + f <= orig_dim:
-                dfilt, dout = conv_bkwd_xtract(conv_in, curr_f, curr_x, curr_y, dconv_prev, dfilt, dout, f, filt, out_x, out_y)
+                param_dict["dout"], param_dict["dfilt"] = bkwd_op(curr_c, curr_x, curr_y, f, out_x, out_y, param_dict)
                 curr_x += s
                 out_x += 1
             curr_y += s
             out_y += 1
         # loss gradient of the bias
-        dbias[curr_f] = np.sum(dconv_prev[curr_f])
-    return dout, dfilt, dbias
+        if param_dict["dbias"] is not None:
+            param_dict["dbias"][curr_c] = np.sum(param_dict["dconv_prev"][curr_c])
+    # dict_out = {"dout": param_dict["dout"], "dfilt": param_dict["dfilt"], "dbias": param_dict["dbias"]}
+    return param_dict
 
-def pool_bkwd(dout, dpool, f, n_c, orig, orig_dim, s):
-    for curr_c in range(n_c):
+
+def pool_bkwd(param_dict, bkwd_op):
+    f = param_dict["f"]
+    orig_dim = param_dict["orig_dim"]
+    s = param_dict["s"]
+
+    for curr_c in range(param_dict["n_c"]):
         curr_y = out_y = 0
         while curr_y + f <= orig_dim:
             curr_x = out_x = 0
             while curr_x + f <= orig_dim:
-                dout = poo_bkwd_xtract(curr_c, curr_x, curr_y, dout, dpool, f, orig, out_x, out_y)
+                param_dict["dout"], param_dict["dfilt"] = bkwd_op(curr_c, curr_x, curr_y, f, out_x, out_y, param_dict)
                 curr_x += s
                 out_x += 1
             curr_y += s
             out_y += 1
-    return dout
+        if param_dict["dbias"] is not None:
+            param_dict["dbias"][curr_c] = np.sum(param_dict["dconv_prev"][curr_c])
+    # dict_out = {"dout": param_dict["dout"], "dfilt": param_dict["dfilt"], "dbias": param_dict["dbias"]}
+    return param_dict
 
 
-def conv_bkwd_xtract(conv_in, curr_f, curr_x, curr_y, dconv_prev, dfilt, dout, f, filt, out_x, out_y):  # TODO: for easier i/o formatting, use dictionaries in the future
+def conv_bkwd_xtract(curr_c, curr_x, curr_y, f, out_x, out_y, param_dict):
+    dconv_prev = param_dict["dconv_prev"]
+    conv_in = param_dict["conv_in"]
+    dfilt = param_dict["dfilt"]
+    filt = param_dict["filt"]
+    dout = param_dict["dout"]
+
     # loss gradient of filter (used to update the filter)
-    dfilt[curr_f] += dconv_prev[curr_f, out_y, out_x] * conv_in[:, curr_y:curr_y + f, curr_x:curr_x + f]
+    dfilt[curr_c] += dconv_prev[curr_c, out_y, out_x] * conv_in[:, curr_y:curr_y + f, curr_x:curr_x + f]
     # loss gradient of the input to the convolution operation (conv1 in the case of this network)
-    dout[:, curr_y:curr_y + f, curr_x:curr_x + f] += dconv_prev[curr_f, out_y, out_x] * filt[curr_f]
-    return dfilt, dout
+    dout[:, curr_y:curr_y + f, curr_x:curr_x + f] += dconv_prev[curr_c, out_y, out_x] * filt[curr_c]
+    return dout, dfilt
 
-def poo_bkwd_xtract(curr_c, curr_x, curr_y, dout, dpool, f, orig, out_x, out_y):
+
+def poo_bkwd_xtract(curr_c, curr_x, curr_y, f, out_x, out_y, param_dict):
+    dconv_prev = param_dict["dconv_prev"]
+    conv_in = param_dict["conv_in"]
+    dout = param_dict["dout"]
     # obtain index of largest value in input for current window
-    (a, b) = nanargmax(orig[curr_c, curr_y:curr_y + f, curr_x:curr_x + f])
-    dout[curr_c, curr_y + a, curr_x + b] = dpool[curr_c, out_y, out_x]
-    return dout
+    (a, b) = nanargmax(conv_in[curr_c, curr_y:curr_y + f, curr_x:curr_x + f])
+    dout[curr_c, curr_y + a, curr_x + b] = dconv_prev[curr_c, out_y, out_x]
+    return dout, None
