@@ -22,26 +22,13 @@ def convolution(image, filt, bias, s=1):  # TODO: refactor: merge convolution & 
     out = np.zeros((n_f, out_dim, out_dim))
 
     # convolve the filter over every part of the image, adding the bias at each step.
-    out = apply(f, filt, s, s, image, in_dim, in_dim, n_f, out, bias, one_conv)
+    param_dict = {"f": f, "filt": filt, "s_x": s, "s_y": s, "image": image, "in_dim_w": in_dim, "in_dim_h": in_dim, "n_c": n_f, "out": out, "bias": bias}
+    out = apply(param_dict, one_conv)
 
     return out
 
 
-# def odd_out(f, filt, stride_x, stride_y, image, in_dim_w, in_dim_h, n_c, out, bias, function):
-#     for curr_c in range(n_c):
-#         curr_y = out_y = 0
-#         while curr_y + f <= in_dim_h:
-#             curr_x = out_x = 0
-#             while curr_x + f <= in_dim_w:
-#                 out = function(f, filt, image, curr_x, curr_y, curr_c, out, out_x, out_y, bias)
-#                 curr_x += stride_x
-#                 out_x += 1
-#             curr_y += stride_y
-#             out_y += 1
-#     return out
-
-
-def maxpool(image, f=2, s=2):  # I assume f==size and s==stride
+def maxpool(image, f=2, s=2, filt=None, bias=None):  # I assume f==size and s==stride  # TODO: refactor: merge convolution & maxpool in the same function
     """
     Downsample `image` using kernel size `f` and stride `s`
     """
@@ -50,33 +37,38 @@ def maxpool(image, f=2, s=2):  # I assume f==size and s==stride
     w = int((w_prev - f) / s) + 1
 
     downsampled = np.zeros((n_c, h, w))
-    downsampled = apply(f, None, s, s, image, w_prev, h_prev, n_c, downsampled, None, one_pool)
+    param_dict = {"f": f, "filt": None, "s_x": s, "s_y": s, "image": image, "in_dim_w": w_prev, "in_dim_h": h_prev,
+                  "n_c": n_c, "out": downsampled, "bias": None}
+    downsampled = apply(param_dict, one_pool)
     return downsampled
 
 
-def apply(f, filt, stride_x, stride_y, image, in_dim_w, in_dim_h, n_c, out, bias, function):
-    for curr_c in range(n_c):
+def apply(param_dict, function):
+    f = param_dict["f"]
+    for curr_c in range(param_dict["n_c"]):
         curr_y = out_y = 0
-        while curr_y + f <= in_dim_h:
+        while curr_y + f <= param_dict["in_dim_h"]:
             curr_x = out_x = 0
-            while curr_x + f <= in_dim_w:
-                out = function(f, filt, image, curr_x, curr_y, curr_c, out, out_x, out_y, bias)
-                curr_x += stride_x
+            while curr_x + f <= param_dict["in_dim_w"]:
+                param_dict["out"] = function(curr_x, curr_y, curr_c, out_x, out_y, param_dict)
+                curr_x += param_dict["s_x"]
                 out_x += 1
-            curr_y += stride_y
+            curr_y += param_dict["s_y"]
             out_y += 1
-    return out
+    return param_dict["out"]
 
 
-def one_conv(f, filt, image, curr_x, curr_y, curr_c, out, out_x, out_y, bias):  # TODO: for easier i/o formatting, use dictionaries in the future
-    out[curr_c, out_y, out_x] = np.sum(filt[curr_c] * image[:, curr_y:curr_y + f, curr_x:curr_x + f]) + \
-                                bias[curr_c]
-    return out
+def one_conv(curr_x, curr_y, curr_c, out_x, out_y, param_dict):
+    f = param_dict["f"]
+
+    param_dict["out"][curr_c, out_y, out_x] = np.sum(param_dict["filt"][curr_c] * param_dict["image"][:, curr_y:curr_y + f, curr_x:curr_x + f]) + param_dict["bias"][curr_c]
+    return param_dict["out"]
 
 
-def one_pool(f, filt, image, curr_x, curr_y, curr_c, out, out_x, out_y, bias):  # filter and bias are not used.
-    out[curr_c, out_y, out_x] = np.max(image[curr_c, curr_y:curr_y + f, curr_x:curr_x + f])
-    return out
+def one_pool(curr_x, curr_y, curr_c, out_x, out_y, param_dict):  # filter and bias are not used.
+    f = param_dict["f"]
+    param_dict["out"][curr_c, out_y, out_x] = np.max(param_dict["image"][curr_c, curr_y:curr_y + f, curr_x:curr_x + f])
+    return param_dict["out"]
 
 
 def softmax(x):

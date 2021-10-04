@@ -5,6 +5,8 @@ Author: Alejandro Escontrela
 Version: V.1.
 Date: June 12th, 2018
 """
+from collections import OrderedDict
+
 from CNN.forward import *
 from CNN.backward import *
 from CNN.utils import *
@@ -70,16 +72,16 @@ def conv(image, label, params, conv_s, pool_f, pool_s):
     dfc = params[2].T.dot(dz)  # loss gradients of fully-connected layer (pooling layer)
     dpool = dfc.reshape(pooled.shape)  # reshape fully connected into dimensions of pooling layer
 
-    dconv2, _, _ = maxpoolBackward(dpool, conv2, pool_f,
-                             pool_s)  # backprop through the max-pooling layer(only neurons with highest activation in window get updated)
+    # backprop through the max-pooling layer(only neurons with highest activation in window get updated)
+    dconv2, _, _ = maxpoolBackward(dpool, conv2, pool_f, pool_s)
     dconv2[conv2 <= 0] = 0  # backpropagate through ReLU
 
-    dconv1, df2, db2 = convolutionBackward(dconv2, conv1, params[1],
-                                           conv_s)  # backpropagate previous gradient through second convolutional layer.
+    # backpropagate previous gradient through second convolutional layer.
+    dconv1, df2, db2 = convolutionBackward(dconv2, conv1, params[1], conv_s)
     dconv1[conv1 <= 0] = 0  # backpropagate through ReLU
 
-    dimage, df1, db1 = convolutionBackward(dconv1, image, params[0],
-                                           conv_s)  # backpropagate previous gradient through first convolutional layer.
+    # backpropagate previous gradient through first convolutional layer.
+    dimage, df1, db1 = convolutionBackward(dconv1, image, params[0], conv_s)
 
     grads = [df1, df2, dw3, dw4, db1, db2, db3, db4]
 
@@ -143,6 +145,63 @@ def adamGD(batch, num_classes, lr, dim, n_c, beta1, beta2, params, cost):
 ##################### Training ######################
 #####################################################
 
+class SequentialModel:
+    def __init__(self):
+        self.layers = OrderedDict()
+
+    def add(self, layer):
+        layer_hash = layer.name() + str(len(self.layers) + 1)
+        self.layers[layer_hash] = layer
+
+    def params(self):
+        no_layers = len(self.layers)
+        parameter_list = [[] for _ in range(no_layers * 2)]
+        for indx, layer in enumerate(self.layers.values()):
+            w, b = layer.params()
+            parameter_list[indx] = w
+            parameter_list[indx + no_layers] = b
+        return parameter_list
+
+
+class Layer:
+    def name(self):
+        return "abstract layer"
+
+    def __init__(self, out_dim, in_dim, kernel=None):
+        self.output_dimension = out_dim
+        self.input_dimension = in_dim
+        self.kernel_dimension = kernel
+        self.weights = None
+        self.biases = None
+
+    def params(self):
+        return self.weights, self.biases
+
+
+class Conv2D(Layer):
+    def name(self):
+        return "Conv2D"
+
+    def __init__(self, out_dim, in_dim, kernel):
+        super(Conv2D, self).__init__(out_dim, in_dim, kernel)
+        w_shape = (out_dim, in_dim, kernel[0], kernel[0])
+        self.weights = initializeFilter(w_shape)
+        self.biases = np.zeros((self.weights.shape[0], 1))
+
+
+class Dense(Layer):
+    def name(self):
+        return "Dense"
+
+    def __init__(self, out_dim, in_dim):
+        super(Dense, self).__init__(out_dim, in_dim)
+        self.output_dimension = out_dim
+        self.input_dimension = in_dim
+        w_shape = (out_dim, in_dim)
+        self.weights = initializeWeight(w_shape)
+        self.biases = np.zeros((self.weights.shape[0], 1))
+
+
 def train(num_classes=10, lr=0.01, beta1=0.95, beta2=0.99, img_dim=28, img_depth=1, f=5, num_filt1=8, num_filt2=8,
           batch_size=32, num_epochs=2, save_path='params.pkl'):  # TODO: batch size is a hyperparam for model
     # training data
@@ -159,42 +218,42 @@ def train(num_classes=10, lr=0.01, beta1=0.95, beta2=0.99, img_dim=28, img_depth
 
     np.random.shuffle(train_data)
 
-    params = [0., 0., 0., 0., 0., 0., 0., 0.]
+    # params = [0., 0., 0., 0., 0., 0., 0., 0.]
     # TODO: create model
-    # model = SequentialModel()
+    model = SequentialModel()
     # Initializing all the parameters
 
     # INITIALIZE CONV & FC LAYERS WEIGHTS (co, ci, kh, kw) & BIASES
 
     # TODO: 1 conv2d
-    # conv_1 = Conv2D(in_dim=img_depth, out_dim=num_filt1, kernel=(f, f))
-    # model.add(conv_1)
-    params[0] = (num_filt1, img_depth, f, f)  # link input_image_shape to conv2d_layer1_shape
-    params[0] = initializeFilter(params[0])  # TODO: isinstance checks => choose initialization politics
-    params[4] = np.zeros((params[0].shape[0], 1))
+    conv_1 = Conv2D(out_dim=num_filt1, in_dim=img_depth, kernel=(f, f))
+    model.add(conv_1)
+    # params[0] = (num_filt1, img_depth, f, f)  # link input_image_shape to conv2d_layer1_shape
+    # params[0] = initializeFilter(params[0])  # TODO: isinstance checks => choose initialization politics
+    # params[4] = np.zeros((params[0].shape[0], 1))
 
     # TODO: 2 conv2d
-    # conv_2 = Conv2D(in_dim=num_filt1, out_dim=num_filt2, kernel=(f, f))
-    # model.add(conv_2)
-    params[1] = (num_filt2, num_filt1, f, f)  # link conv2d_layer1_shape to conv2d_layer2_shape
-    params[1] = initializeFilter(params[1])
-    params[5] = np.zeros((params[1].shape[0], 1))
+    conv_2 = Conv2D(out_dim=num_filt2, in_dim=num_filt1, kernel=(f, f))
+    model.add(conv_2)
+    # params[1] = (num_filt2, num_filt1, f, f)  # link conv2d_layer1_shape to conv2d_layer2_shape
+    # params[1] = initializeFilter(params[1])
+    # params[5] = np.zeros((params[1].shape[0], 1))
 
     # TODO: 3 dense
-    # dense3 = Dense(in_dim=800, out_dim=128)
-    # model.add(dense3)
-    params[2] = (128, 800)
-    params[2] = initializeWeight(params[2])
-    params[6] = np.zeros((params[2].shape[0], 1))
+    dense3 = Dense(out_dim=128, in_dim=800)
+    model.add(dense3)
+    # params[2] = (128, 800)
+    # params[2] = initializeWeight(params[2])
+    # params[6] = np.zeros((params[2].shape[0], 1))
 
     # TODO: 4 dense
-    # dense4 = Dense(in_dim=128, out_dim=10)
-    # model.add(dense4)
-    params[3] = (10, 128)
-    params[3] = initializeWeight(params[3])
-    params[7] = np.zeros((params[3].shape[0], 1))
+    dense4 = Dense(out_dim=10, in_dim=128)
+    model.add(dense4)
+    # params[3] = (10, 128)
+    # params[3] = initializeWeight(params[3])
+    # params[7] = np.zeros((params[3].shape[0], 1))
 
-    # params = model.params()
+    params = model.params()
 
     cost = []
 
