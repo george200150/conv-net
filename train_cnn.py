@@ -37,7 +37,7 @@ if __name__ == '__main__':
     cost = train(save_path=save_path)
 
     params, cost = pickle.load(open(save_path, 'rb'))
-    [f1, f2, w3, w4, b1, b2, b3, b4] = params
+    [f1, f2, _, _, w3, w4, b1, b2, _, _, b3, b4] = params
 
     # Plot cost 
     plt.plot(cost, 'r')
