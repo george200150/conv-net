@@ -1,10 +1,3 @@
-"""
-Description: Script to train the network and measure its performance on the test set.
-
-Author: Alejandro Escontrela
-Version: V.1.
-Date: June 12th, 2018
-"""
 import random
 
 from CNN.network import *
@@ -36,7 +29,7 @@ if __name__ == '__main__':
 
     cost = train(save_path=save_path)
 
-    params, cost = pickle.load(open(save_path, 'rb'))
+    params, cost = pickle.load(open(save_path, 'rb'))  # TODO: remove hardcoded layers
     [f1, f2, _, _, w3, w4, b1, b2, _, _, b3, b4] = params
 
     # Plot cost 

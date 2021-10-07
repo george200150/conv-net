@@ -1,55 +1,56 @@
-"""
-Description: forward operations for a convolutional neural network
-
-Author: Alejandro Escontrela
-Version: 1.0
-Date: June 12th, 2018
-"""
 import numpy as np
 
 
-#####################################################
-################ Forward Operations #################
-#####################################################
-def convolution(image, filt, bias, s=1):  # TODO: refactor: merge convolution & maxpool in the same function
+# TODO: refactor: merge convolution & maxpool in the same function
+def convolution(input_image_matrix, kernel_weights_matrix, bias, stride=1):
     """
-    Confolves `filt` over `image` using stride `s`
+    Convolve `kernel_weights_matrix` over `input_image_matrix` using stride `stride`
     """
-    (n_f, n_c_f, f, _) = filt.shape  # filter dimensions
-    n_c, in_dim, _ = image.shape  # image dimensions
-    out_dim = int((in_dim - f) / s) + 1  # calculate output dimensions
-    assert n_c == n_c_f, "Dimensions of filter must match dimensions of input image"
-    out = np.zeros((n_f, out_dim, out_dim))
+    (no_channels_out, no_channels_in_from_kernel, kernel_size, _) = kernel_weights_matrix.shape  # filter dimensions
+    no_channels_in_from_image, initial_h, initial_w = input_image_matrix.shape  # image dimensions
+    output_h = int((initial_h - kernel_size) / stride) + 1  # calculate output dimensions
+    output_w = int((initial_w - kernel_size) / stride) + 1
+    assert(no_channels_in_from_image == no_channels_in_from_kernel,
+           "Filter and Image dimension mismatch. Expected {} but instead got {}."
+           .format(no_channels_in_from_image, no_channels_in_from_kernel))
+    output_matrix = np.zeros((no_channels_out, output_h, output_w))
 
     # convolve the filter over every part of the image, adding the bias at each step.
-    param_dict = {"f": f, "filt": filt, "s_x": s, "s_y": s, "image": image, "in_dim_w": in_dim, "in_dim_h": in_dim, "n_c": n_f, "out": out, "bias": bias}
-    out = apply(param_dict, one_conv)
+    param_dict = {"f": kernel_size, "filt": kernel_weights_matrix, "s_x": stride, "s_y": stride,
+                  "image": input_image_matrix, "in_dim_w": initial_w, "in_dim_h": initial_h, "n_c": no_channels_out,
+                  "out": output_matrix, "bias": bias}
+    output_matrix = apply(param_dict, do_one_conv)
 
-    return out
+    return output_matrix
 
 
-def maxpool(image, f=2, s=2, filt=None, bias=None):  # I assume f==size and s==stride  # TODO: refactor: merge convolution & maxpool in the same function
+# TODO: refactor: merge convolution & maxpool in the same function
+def maxpool(input_image_matrix, kernel_size=2, stride=2, kernel_weights_matrix=None, bias=None):
     """
     Downsample `image` using kernel size `f` and stride `s`
     """
-    n_c, h_prev, w_prev = image.shape
-    h = int((h_prev - f) / s) + 1
-    w = int((w_prev - f) / s) + 1
+    no_channels, initial_h, initial_w = input_image_matrix.shape
+    output_h = int((initial_h - kernel_size) / stride) + 1
+    output_w = int((initial_w - kernel_size) / stride) + 1
 
-    downsampled = np.zeros((n_c, h, w))
-    param_dict = {"f": f, "filt": None, "s_x": s, "s_y": s, "image": image, "in_dim_w": w_prev, "in_dim_h": h_prev,
-                  "n_c": n_c, "out": downsampled, "bias": None}
-    downsampled = apply(param_dict, one_pool)
-    return downsampled
+    output_matrix = np.zeros((no_channels, output_h, output_w))
+    param_dict = {"f": kernel_size, "filt": None, "s_x": stride, "s_y": stride, "image": input_image_matrix,
+                  "in_dim_w": initial_w,
+                  "in_dim_h": initial_h, "n_c": no_channels, "out": output_matrix, "bias": None}
+    output_matrix = apply(param_dict, do_one_pool)
+    return output_matrix
 
 
 def apply(param_dict, function):
-    f = param_dict["f"]
+    """
+    Parametrized convolution execution body that applies a function (sliding window) over the whole input matrix.
+    """
+    kernel_size = param_dict["f"]
     for curr_c in range(param_dict["n_c"]):
         curr_y = out_y = 0
-        while curr_y + f <= param_dict["in_dim_h"]:
+        while curr_y + kernel_size <= param_dict["in_dim_h"]:
             curr_x = out_x = 0
-            while curr_x + f <= param_dict["in_dim_w"]:
+            while curr_x + kernel_size <= param_dict["in_dim_w"]:
                 param_dict["out"] = function(curr_x, curr_y, curr_c, out_x, out_y, param_dict)
                 curr_x += param_dict["s_x"]
                 out_x += 1
@@ -58,16 +59,26 @@ def apply(param_dict, function):
     return param_dict["out"]
 
 
-def one_conv(curr_x, curr_y, curr_c, out_x, out_y, param_dict):
-    f = param_dict["f"]
+def do_one_conv(curr_x, curr_y, curr_channels, out_x, out_y, param_dict):
+    """
+    Parametrized function that executes one convolution over a certain window in the input matrix.
+    """
+    kernel_size = param_dict["f"]
 
-    param_dict["out"][curr_c, out_y, out_x] = np.sum(param_dict["filt"][curr_c] * param_dict["image"][:, curr_y:curr_y + f, curr_x:curr_x + f]) + param_dict["bias"][curr_c]
+    param_dict["out"][curr_channels, out_y, out_x] = \
+        np.sum(param_dict["filt"][curr_channels] *
+               param_dict["image"][:, curr_y:curr_y + kernel_size, curr_x:curr_x + kernel_size]) + \
+        param_dict["bias"][curr_channels]
     return param_dict["out"]
 
 
-def one_pool(curr_x, curr_y, curr_c, out_x, out_y, param_dict):  # filter and bias are not used.
-    f = param_dict["f"]
-    param_dict["out"][curr_c, out_y, out_x] = np.max(param_dict["image"][curr_c, curr_y:curr_y + f, curr_x:curr_x + f])
+def do_one_pool(curr_x, curr_y, curr_channels, out_x, out_y, param_dict):
+    """
+    Parametrized function that executes one max pooling over a certain window in the input matrix.
+    """
+    kernel_size = param_dict["f"]
+    param_dict["out"][curr_channels, out_y, out_x] = np.max(
+        param_dict["image"][curr_channels, curr_y:curr_y + kernel_size, curr_x:curr_x + kernel_size])
     return param_dict["out"]
 
 

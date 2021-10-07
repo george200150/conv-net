@@ -1,98 +1,15 @@
-"""
-Description: methods to set up and train the network's parameters.
-
-Author: Alejandro Escontrela
-Version: V.1.
-Date: June 12th, 2018
-"""
 from collections import OrderedDict
 from copy import deepcopy
-
-from CNN.forward import *
-from CNN.backward import *
-from CNN.utils import *
 
 import numpy as np
 import pickle
 from tqdm import tqdm
 
-
-#####################################################
-############### Building The Network ################
-#####################################################
-
-def conv(image, label, params, conv_s, pool_f, pool_s):
-    ################################################
-    ############## Forward Operation ###############
-    ################################################
-    # TODO: params[i] and params[i + no_layers]  (depends on weight and bias index)
-    conv1 = convolution(image, params[0], params[4], conv_s)  # convolution operation
-    conv1[conv1 <= 0] = 0  # pass through ReLU non-linearity
-
-    conv2 = convolution(conv1, params[1], params[5], conv_s)  # second convolution operation
-    conv2[conv2 <= 0] = 0  # pass through ReLU non-linearity
-
-    pooled = maxpool(conv2, pool_f, pool_s)  # maxpooling operation
-
-    (nf2, dim2, _) = pooled.shape
-    fc = pooled.reshape((nf2 * dim2 * dim2, 1))  # flatten pooled layer
-
-    z = params[2].dot(fc) + params[6]  # first dense layer
-    z[z <= 0] = 0  # pass through ReLU non-linearity
-
-    out = params[3].dot(z) + params[7]  # second dense layer
-    probs = softmax(out)  # predict class probabilities with the softmax activation function
-
-    ################################################
-    #################### Loss ######################
-    ################################################
-
-    # TODO: loss as callback !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    loss = categoricalCrossEntropy(probs, label)  # categorical cross-entropy loss
-
-    ################################################
-    ############# Backward Operation ###############
-    ################################################
-    dout = probs - label  # derivative of loss w.r.t. final dense layer output
+from CNN.backward import convolutionBackward, maxpoolBackward
+from CNN.forward import categoricalCrossEntropy, convolution, maxpool, softmax
+from CNN.utils import initializeFilter, initializeWeight, extract_data, extract_labels
 
 
-    dw4 = dout.dot(z.T)  # loss gradient of final dense layer weights
-    db4 = np.sum(dout, axis=1).reshape(params[7].shape)  # loss gradient of final dense layer biases
-
-    dz = params[3].T.dot(dout)  # loss gradient of first dense layer outputs
-    dz[z <= 0] = 0  # backpropagate through ReLU
-
-
-    dw3 = dz.dot(fc.T)
-    db3 = np.sum(dz, axis=1).reshape(params[6].shape)
-
-
-    dfc = params[2].T.dot(dz)  # loss gradients of fully-connected layer (pooling layer)
-
-
-    dpool = dfc.reshape(pooled.shape)  # reshape fully connected into dimensions of pooling layer
-
-    # backprop through the max-pooling layer(only neurons with highest activation in window get updated)
-    dconv2, _, _ = maxpoolBackward(dpool, conv2, pool_f, pool_s)
-    dconv2[conv2 <= 0] = 0  # backpropagate through ReLU
-
-    # backpropagate previous gradient through second convolutional layer.
-    dconv1, df2, db2 = convolutionBackward(dconv2, conv1, params[1], conv_s)
-    dconv1[conv1 <= 0] = 0  # backpropagate through ReLU
-
-    # backpropagate previous gradient through first convolutional layer.
-    dimage, df1, db1 = convolutionBackward(dconv1, image, params[0], conv_s)
-
-    grads = [df1, df2, dw3, dw4, db1, db2, db3, db4]
-
-    return grads, loss
-
-
-#####################################################
-################### Optimization ####################
-#####################################################
-
-# def adamGD(batch, num_classes, lr, dim, n_c, beta1, beta2, params, cost):
 def adamGD(batch, num_classes, lr, dim, n_c, beta1, beta2, model, cost):
     """
     update the parameters through Adam gradient descnet.
@@ -229,14 +146,14 @@ class SequentialModel:  # TODO: refactor Layer not to contain kernels (it has no
             parameter_list[indx + no_layers] = b
         return parameter_list
 
-    def full_forward(self, x):
+    def full_forward(self, x):  # inference is correctly computed
         outputs = [deepcopy(x)]  # first, insert the input image itself
         for indx, layer in enumerate(self.layers.values()):
             x = layer.forward(x)
             outputs.append(deepcopy(x))  # TODO: dk if dc is needed
         return x, outputs
 
-    def full_backprop(self, probs, label, feed_results):
+    def full_backprop(self, probs, label, feed_results):  # grads are correctly computed
         no_layers = len(self.layers)
         dout = probs - label  # derivative of loss w.r.t. final dense layer output
         grads_weights = [0 for _ in range(no_layers)]
@@ -246,7 +163,7 @@ class SequentialModel:  # TODO: refactor Layer not to contain kernels (it has no
                 dout, grads_weights[no_layers - 1 - indx], grads_biases[no_layers - 1 - indx] = layer.backprop(dout, feed_results[no_layers - indx - 1], temp_fix=True)
             else:
                 dout, grads_weights[no_layers - 1 - indx], grads_biases[no_layers - 1 - indx] = layer.backprop(dout, feed_results[no_layers - indx - 1], temp_fix=False)
-        return grads_weights, grads_biases  # TODO: THERE MUST BE AN ERROR IN FLATTEN OR MAXPOOL OR CONV2D !!!
+        return grads_weights, grads_biases
 
     def add_grads(self, grads_w, grads_b):
         for indx, layer in enumerate(self.layers.values()):
@@ -314,13 +231,13 @@ class Conv2D(Layer):
         self.biases = np.zeros((self.weights.shape[0], 1))
 
     def forward(self, x):  # TODO: we must remember all dimensions of in_data and more...
-        x = convolution(x, self.weights, self.biases, s=1)
+        x = convolution(x, self.weights, self.biases, stride=1)
         x = self.activision(x)
         return x
 
     def backprop(self, dx, x, temp_fix):  # TODO: activision is mismatched, cannot use layer activation, but previous' layer activation
         # backpropagate previous gradient through second convolutional layer.
-        dx, d_weights, d_bias = convolutionBackward(dx, x, self.weights, s=1)
+        dx, d_weights, d_bias = convolutionBackward(dx, x, self.weights, stride=1)
         if not temp_fix:
             dx[x <= 0] = 0  # backpropagate through ReLU
         # TODO: because activision is relu
@@ -368,7 +285,7 @@ class Flatten(Layer):
         return dpool, None, None
 
 
-class Dense(Layer):  # TODO: Layers are now implemented for SINGLE-THREADED execution exclusively
+class Dense(Layer):  # TODO: Layers are now implemented for SINGLE-THREADED execution exclusively (last input's size is stored inside them)
     def name(self):
         return "Dense"
 
@@ -386,6 +303,7 @@ class Dense(Layer):  # TODO: Layers are now implemented for SINGLE-THREADED exec
         return x
 
     def backprop(self, dx, x, temp_fix):  # TODO: backprop should know what activision to apply
+        # (create self.backprop_activision that is set at the beginning of the full_backprop() function)
         d_weight = dx.dot(x.T)  # loss gradient of final dense layer weights
         d_biases = np.sum(dx, axis=1).reshape(self.biases.shape)  # loss gradient of final dense layer biases
         dx = self.weights.T.dot(dx)  # loss gradient of first dense layer outputs
@@ -405,6 +323,7 @@ def train(img_dim=28, img_depth=1, f=5, num_filt1=8, num_filt2=8, lr=0.01, beta1
           num_classes=10, save_path="params.pkl"):
     # training data
     # m = 50000
+    global params
     m = 500
     X = extract_data('train-images-idx3-ubyte.gz', m, img_dim)
     y_dash = extract_labels('train-labels-idx1-ubyte.gz', m).reshape(m, 1)
