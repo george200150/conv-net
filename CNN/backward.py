@@ -1,5 +1,5 @@
 import numpy as np
-from CNN.utils import nanargmax
+from CNN.functions import nanargmax
 
 
 # TODO: refactor: merge convolutionBackward & maxpoolBackward in the same function

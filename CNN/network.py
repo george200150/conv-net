@@ -1,12 +1,12 @@
 from collections import OrderedDict
-from copy import deepcopy
 
 import numpy as np
 import pickle
 from tqdm import tqdm
 
 from CNN.backward import convolutionBackward, maxpoolBackward
-from CNN.forward import categoricalCrossEntropy, convolution, maxpool, softmax
+from CNN.forward import convolution, maxpool
+from CNN.functions import categoricalCrossEntropy, softmax, relu, idx
 from CNN.utils import initializeFilter, initializeWeight, extract_data, extract_labels
 
 
@@ -14,7 +14,6 @@ def adamGD(batch, num_classes, lr, dim, n_c, beta1, beta2, model, cost):
     """
     update the parameters through Adam gradient descnet.
     """
-
     global grads
     X = batch[:, 0:-1]  # get batch inputs
     X = X.reshape(len(batch), n_c, dim, dim)  # TODO: change with (dim_x, dim_y)
@@ -46,7 +45,6 @@ def adamGD(batch, num_classes, lr, dim, n_c, beta1, beta2, model, cost):
             dvs.append(weights)
 
     # full forward run
-    # print("==========BATCH START==========")
     for i in range(batch_size):
         x = X[i]
         y = np.eye(num_classes)[int(Y[i])].reshape(num_classes, 1)  # convert label to one-hot
@@ -70,14 +68,6 @@ def adamGD(batch, num_classes, lr, dim, n_c, beta1, beta2, model, cost):
 
         cost_ += loss
 
-    # for i in range(3):  # TODO: refactor this - find out what the parameters do - too tired for this now.
-    #     for j in range(12):
-    #         if params[j] is not None:
-    #             dvs[i][j] = np.zeros(params[j].shape)
-    #         else:
-    #             dvs[i][j] = None
-    # SORRY, DUPLICATED BY MISTAKE...
-
     # backprop
     for my_i in range(8):
         if dvs[0][my_i] is None or dvs[1][my_i] is None or dvs[2][my_i] is None:
@@ -90,8 +80,6 @@ def adamGD(batch, num_classes, lr, dim, n_c, beta1, beta2, model, cost):
     cost_ = cost_ / batch_size
     cost.append(cost_)
 
-    # print("==========BATCH END==========")
-    # print(params)
     model.set_params(params)
     return model.params(), cost
 
@@ -99,10 +87,6 @@ def adamGD(batch, num_classes, lr, dim, n_c, beta1, beta2, model, cost):
 #####################################################
 ##################### Training ######################
 #####################################################
-def relu(x):
-    x[x <= 0] = 0
-    return x
-
 
 class AdamOptimizer:
     def __init__(self, lr=0.01, beta1=0.95, beta2=0.99, batch_size=32, num_epochs=2):
@@ -125,7 +109,7 @@ class AdamOptimizer:
         self.frequency = freq
 
 
-class SequentialModel:  # TODO: refactor Layer not to contain kernels (it has no sense for dense)
+class SequentialModel:
     def __init__(self):
         self.layers = OrderedDict()
         self.optimizer = None
@@ -146,23 +130,28 @@ class SequentialModel:  # TODO: refactor Layer not to contain kernels (it has no
             parameter_list[indx + no_layers] = b
         return parameter_list
 
-    def full_forward(self, x):  # inference is correctly computed
-        outputs = [deepcopy(x)]  # first, insert the input image itself
+    def full_forward(self, x):
+        outputs = [x]  # first, insert the input image itself
         for indx, layer in enumerate(self.layers.values()):
             x = layer.forward(x)
-            outputs.append(deepcopy(x))  # TODO: dk if dc is needed
-        return x, outputs
+            outputs.append(x)
+        return x, outputs  # TODO: could refactor this, as outputs contains x already
 
-    def full_backprop(self, probs, label, feed_results):  # grads are correctly computed
-        no_layers = len(self.layers)
+    def full_backprop(self, probs, label, feed_results):
+        layers = self.layers.values()
+        no_layers = len(layers)
+        prev_layer = None
+        for layer in layers:  # tell backprop what activations to use
+            if prev_layer is not None:
+                layer.set_backward_activation(prev_layer.activation)
+            prev_layer = layer
+
         dout = probs - label  # derivative of loss w.r.t. final dense layer output
         grads_weights = [0 for _ in range(no_layers)]
         grads_biases = [0 for _ in range(no_layers)]
-        for indx, layer in enumerate(reversed(self.layers.values())):
-            if list(self.layers.keys())[no_layers - indx - 1][:-1] in ["MaxPool", "Flatten"] or indx == no_layers - 1:  # TODO: we must tell the backprop what activisions to use
-                dout, grads_weights[no_layers - 1 - indx], grads_biases[no_layers - 1 - indx] = layer.backprop(dout, feed_results[no_layers - indx - 1], temp_fix=True)
-            else:
-                dout, grads_weights[no_layers - 1 - indx], grads_biases[no_layers - 1 - indx] = layer.backprop(dout, feed_results[no_layers - indx - 1], temp_fix=False)
+        for indx, layer in enumerate(reversed(layers)):
+            dout, grads_weights[no_layers - 1 - indx], \
+                grads_biases[no_layers - 1 - indx] = layer.backprop(dout, feed_results[no_layers - indx - 1])
         return grads_weights, grads_biases
 
     def add_grads(self, grads_w, grads_b):
@@ -186,20 +175,18 @@ class SequentialModel:  # TODO: refactor Layer not to contain kernels (it has no
         raise NotImplementedError("train")
 
 
-class Layer:
+class Layer:  # TODO: refactor Layer not to contain kernels (it has no sense for dense)
     def name(self):
         raise NotImplementedError("abstract layer")
 
-    # TODO:  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    # TODO:  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    # TODO:  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     def __init__(self, out_dim=None, in_dim=None, kernel=None):  # TODO: kernel_filter_size, kernel_stride
         self.output_dimension = out_dim
         self.input_dimension = in_dim
         self.kernel_dimension = kernel
         self.weights = None
         self.biases = None
-        self.activision = None
+        self.activation = None
+        self.back_activation = idx
 
     def params(self):
         return self.weights, self.biases
@@ -210,13 +197,16 @@ class Layer:
     def set_biases(self, b):
         self.biases = b
 
-    def setActivision(self, fct):
-        self.activision = fct
+    def set_activation(self, fct):
+        self.activation = fct
+
+    def set_backward_activation(self, fct):
+        self.back_activation = fct
 
     def forward(self, x):
         raise NotImplementedError("inference")
 
-    def backprop(self, dx, x, temp_fix):
+    def backprop(self, dx, x):
         raise NotImplementedError("gradient computation")
 
 
@@ -230,21 +220,16 @@ class Conv2D(Layer):
         self.weights = initializeFilter(w_shape)
         self.biases = np.zeros((self.weights.shape[0], 1))
 
-    def forward(self, x):  # TODO: we must remember all dimensions of in_data and more...
+    def forward(self, x):
         x = convolution(x, self.weights, self.biases, stride=1)
-        x = self.activision(x)
+        x = self.activation.activation(x)
         return x
 
-    def backprop(self, dx, x, temp_fix):  # TODO: activision is mismatched, cannot use layer activation, but previous' layer activation
+    def backprop(self, dx, x):
         # backpropagate previous gradient through second convolutional layer.
         dx, d_weights, d_bias = convolutionBackward(dx, x, self.weights, stride=1)
-        if not temp_fix:
-            dx[x <= 0] = 0  # backpropagate through ReLU
-        # TODO: because activision is relu
 
-        # # backpropagate previous gradient through first convolutional layer.
-        # dx, d_weights, d_bias = convolutionBackward(dx, x, self.weights, s=1)
-        # # TODO: because it's first layer
+        dx = self.back_activation.backprop_activation(dx, x)
         return dx, d_weights, d_bias
 
 
@@ -257,12 +242,14 @@ class MaxPool(Layer):
 
     def forward(self, x):
         x = maxpool(x, self.kernel_dimension[0], self.kernel_dimension[1])
+        # TODO: activation ?
         return x
 
-    def backprop(self, dx, x, temp_fix):
+    def backprop(self, dx, x):
         # backprop through the max-pooling layer(only neurons with highest activation in window get updated)
         dx, _, _ = maxpoolBackward(dx, x, self.kernel_dimension[0], self.kernel_dimension[1])
-        dx[x <= 0] = 0  # backpropagate through ReLU
+
+        dx = self.back_activation.backprop_activation(dx, x)
         return dx, None, None
 
 
@@ -278,14 +265,17 @@ class Flatten(Layer):
         (nf2, dim2, _) = x.shape
         self.original_shape = x.shape
         flat_x = x.reshape((nf2 * dim2 * dim2, 1))
+        # TODO: activation ?
         return flat_x
 
-    def backprop(self, dx, x, temp_fix):
-        dpool = dx.reshape(self.original_shape)  # reshape fully connected into dimensions of pooling layer
-        return dpool, None, None
+    def backprop(self, dx, x):
+        dx = dx.reshape(self.original_shape)  # reshape fully connected into dimensions of pooling layer
+        dx = self.activation.backprop_activation(dx, x)
+        return dx, None, None
 
 
-class Dense(Layer):  # TODO: Layers are now implemented for SINGLE-THREADED execution exclusively (last input's size is stored inside them)
+# TODO: Layers are now implemented for SINGLE-THREADED execution exclusively (last input's size is stored inside them)
+class Dense(Layer):
     def name(self):
         return "Dense"
 
@@ -299,28 +289,20 @@ class Dense(Layer):  # TODO: Layers are now implemented for SINGLE-THREADED exec
 
     def forward(self, x):
         x = self.weights.dot(x) + self.biases
-        x = self.activision(x)
+        x = self.activation.activation(x)
         return x
 
-    def backprop(self, dx, x, temp_fix):  # TODO: backprop should know what activision to apply
-        # (create self.backprop_activision that is set at the beginning of the full_backprop() function)
+    def backprop(self, dx, x):
         d_weight = dx.dot(x.T)  # loss gradient of final dense layer weights
         d_biases = np.sum(dx, axis=1).reshape(self.biases.shape)  # loss gradient of final dense layer biases
         dx = self.weights.T.dot(dx)  # loss gradient of first dense layer outputs
-        if not temp_fix:
-            dx[x <= 0] = 0  # backpropagate through ReLU
-            # TODO: because activision is relu
 
-        # dw3 = dz.dot(fc.T)
-        # db3 = np.sum(dz, axis=1).reshape(params[6].shape)
-        # dfc = params[2].T.dot(dz)  # loss gradients of fully-connected layer (pooling layer)
-        # # TODO: because activision is none (maxpool link)
+        dx = self.back_activation.backprop_activation(dx, x)
         return dx, d_weight, d_biases
 
 
-# def train(img_dim=28, img_depth=1, f=5, num_filt1=8, num_filt2=8):  # TODO: batch size is a hyperparam for model
-def train(img_dim=28, img_depth=1, f=5, num_filt1=8, num_filt2=8, lr=0.01, beta1=0.95, beta2=0.99, batch_size=32, num_epochs=2,
-          num_classes=10, save_path="params.pkl"):
+def train(img_dim=28, img_depth=1, f=5, num_filt1=8, num_filt2=8, lr=0.01, beta1=0.95, beta2=0.99, batch_size=32,
+          num_epochs=2, num_classes=10, save_path="params.pkl"):
     # training data
     # m = 50000
     global params
@@ -341,33 +323,33 @@ def train(img_dim=28, img_depth=1, f=5, num_filt1=8, num_filt2=8, lr=0.01, beta1
 
     # INITIALIZE CONV & FC LAYERS WEIGHTS (co, ci, kh, kw) & BIASES
     conv_1 = Conv2D(out_dim=num_filt1, in_dim=img_depth, kernel=(f, f))
-    conv_1.setActivision(relu)
+    conv_1.set_activation(relu)
     model.add(conv_1)
 
-    # TODO: WHERE IN THE WORLD IS THE MAXPOOL LAYER ????????????????????????????????????????????????????????????????????
-
     conv_2 = Conv2D(out_dim=num_filt2, in_dim=num_filt1, kernel=(f, f))
-    conv_2.setActivision(relu)
+    conv_2.set_activation(relu)
     model.add(conv_2)
 
     pooled = MaxPool(kernel=(2, 2))
+    pooled.set_activation(idx)
     model.add(pooled)
 
     flatten = Flatten()
+    flatten.set_activation(idx)
     model.add(flatten)
 
     dense3 = Dense(out_dim=128, in_dim=800)
-    dense3.setActivision(relu)
+    dense3.set_activation(relu)
     model.add(dense3)
 
     dense4 = Dense(out_dim=10, in_dim=128)
-    dense4.setActivision(softmax)
+    dense4.set_activation(softmax)
     model.add(dense4)
 
     # params = model.params()
     # optimizer = AdamOptimizer(lr=0.01, beta1=0.95, beta2=0.99, batch_size=32, num_epochs=2)
     # optimizer.set_loss(categoricalCrossEntropy)
-    # optimizer.addCallbacks([DumpModelCallback(save_path='params.pkl')])  # todo: decide if functional or object-oriented
+    # optimizer.addCallbacks([DumpModelCallback(save_path='params.pkl')])  # object-oriented style
     # optimizer.setFrequency(1)  # every x-th epoch
 
     # model.set_optimizer(adamGD)

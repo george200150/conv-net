@@ -80,12 +80,3 @@ def do_one_pool(curr_x, curr_y, curr_channels, out_x, out_y, param_dict):
     param_dict["out"][curr_channels, out_y, out_x] = np.max(
         param_dict["image"][curr_channels, curr_y:curr_y + kernel_size, curr_x:curr_x + kernel_size])
     return param_dict["out"]
-
-
-def softmax(x):
-    out = np.exp(x)
-    return out / np.sum(out)
-
-
-def categoricalCrossEntropy(probs, label):
-    return -np.sum(label * np.log(probs))
