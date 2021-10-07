@@ -1,114 +1,19 @@
 from collections import OrderedDict
 
 import numpy as np
-import pickle
-from tqdm import tqdm
 
 from CNN.backward import convolutionBackward, maxpoolBackward
+from CNN.callbacks import DumpModelPickleCallback
+from CNN.dataloader import DataLoader
 from CNN.forward import convolution, maxpool
 from CNN.functions import categoricalCrossEntropy, softmax, relu, idx
-from CNN.utils import initializeFilter, initializeWeight, extract_data, extract_labels
-
-
-def adamGD(batch, num_classes, lr, dim, n_c, beta1, beta2, model, cost):
-    """
-    update the parameters through Adam gradient descnet.
-    """
-    global grads
-    X = batch[:, 0:-1]  # get batch inputs
-    X = X.reshape(len(batch), n_c, dim, dim)  # TODO: change with (dim_x, dim_y)
-    Y = batch[:, -1]  # get batch labels
-
-    cost_ = 0
-    batch_size = len(batch)
-
-    # initialize gradients and momentum, RMS params
-    # dvs = None
-    # for _ in range(3):
-    #     weights = [np.zeros(w_b.shape) for w_b in params]  # FULL PYTHON LIST
-    #     if dvs is None:
-    #         dvs = [weights]
-    #     else:
-    #         dvs.append(weights)
-    dvs = None  # TODO: refactor this - find out what the parameters do - too tired for this now.
-    params = model.params()
-    for _ in range(3):
-        weights = []
-        for w_b in params:  # FULL PYTHON LIST
-            if w_b is not None:
-                weights.append(np.zeros(w_b.shape))
-            else:
-                weights.append(None)
-        if dvs is None:
-            dvs = [weights]
-        else:
-            dvs.append(weights)
-
-    # full forward run
-    for i in range(batch_size):
-        x = X[i]
-        y = np.eye(num_classes)[int(Y[i])].reshape(num_classes, 1)  # convert label to one-hot
-
-        # Collect Gradients for training example
-        # grads, loss = conv(x, y, params, 1, 2, 2)
-        probs, feed_results = model.full_forward(x)
-        loss = categoricalCrossEntropy(probs, y)  # categorical cross-entropy loss
-        # print(loss)
-        grads_w, grads_b = model.full_backprop(probs, y, feed_results)
-
-        # model.add_grads(grads_w, grads_b)
-        grads = []
-        grads.extend(grads_w)
-        grads.extend(grads_b)
-        for xx in range(model.no_layers() * 2):
-            if grads[xx] is not None:
-                dvs[0][xx] += grads[xx]
-            else:
-                dvs[0][xx] = None
-
-        cost_ += loss
-
-    # backprop
-    for my_i in range(8):
-        if dvs[0][my_i] is None or dvs[1][my_i] is None or dvs[2][my_i] is None:
-            continue
-        dvs[1][my_i] = beta1 * dvs[1][my_i] + (1 - beta1) * dvs[0][my_i] / batch_size  # momentum update
-        dvs[2][my_i] = beta2 * dvs[2][my_i] + (1 - beta2) * (dvs[0][my_i] / batch_size) ** 2  # RMSProp update
-        # combine momentum and RMSProp to perform update with Adam
-        params[my_i] -= lr * dvs[1][my_i] / np.sqrt(dvs[2][my_i] + 1e-7)
-
-    cost_ = cost_ / batch_size
-    cost.append(cost_)
-
-    model.set_params(params)
-    return model.params(), cost
+from CNN.optimizer import AdamOptimizer
+from CNN.utils import initializeFilter, initializeWeight
 
 
 #####################################################
 ##################### Training ######################
 #####################################################
-
-class AdamOptimizer:
-    def __init__(self, lr=0.01, beta1=0.95, beta2=0.99, batch_size=32, num_epochs=2):
-        self.lr = lr
-        self.beta1 = beta1
-        self.beta2 = beta2
-        self.batch_size = batch_size
-        self.num_epochs = num_epochs
-        self.loss = None
-        self.callbacks = []
-        self.frequency = 1
-
-    def set_loss(self, loss_fct):
-        self.loss = loss_fct
-
-    def addCallbacks(self, callback_list):
-        self.callbacks.append(callback_list)
-
-    def setFrequency(self, freq):
-        self.frequency = freq
-
-
 class SequentialModel:
     def __init__(self):
         self.layers = OrderedDict()
@@ -171,8 +76,7 @@ class SequentialModel:
         self.optimizer = opt
 
     def train(self, train_data):
-        self.optimizer.train(self, train_data)  # TODO: must see what parameters are needed
-        raise NotImplementedError("train")
+        return self.optimizer.train(self, train_data)  # TODO: must see what parameters are needed
 
 
 class Layer:  # TODO: refactor Layer not to contain kernels (it has no sense for dense)
@@ -301,23 +205,7 @@ class Dense(Layer):
         return dx, d_weight, d_biases
 
 
-def train(img_dim=28, img_depth=1, f=5, num_filt1=8, num_filt2=8, lr=0.01, beta1=0.95, beta2=0.99, batch_size=32,
-          num_epochs=2, num_classes=10, save_path="params.pkl"):
-    # training data
-    # m = 50000
-    global params
-    m = 500
-    X = extract_data('train-images-idx3-ubyte.gz', m, img_dim)
-    y_dash = extract_labels('train-labels-idx1-ubyte.gz', m).reshape(m, 1)
-
-    # TODO: this is a normalization step (can encapsulate it in a function)
-    X -= int(np.mean(X))
-    X /= int(np.std(X))
-
-    train_data = np.hstack((X, y_dash))
-
-    np.random.shuffle(train_data)
-
+def build_model(num_classes=10, img_dim=28, img_depth=1, f=5, num_filt1=8, num_filt2=8, save_path='params.pkl'):
     model = SequentialModel()
     # Initializing all the parameters
 
@@ -342,40 +230,27 @@ def train(img_dim=28, img_depth=1, f=5, num_filt1=8, num_filt2=8, lr=0.01, beta1
     dense3.set_activation(relu)
     model.add(dense3)
 
-    dense4 = Dense(out_dim=10, in_dim=128)
+    dense4 = Dense(out_dim=num_classes, in_dim=128)
     dense4.set_activation(softmax)
     model.add(dense4)
 
-    # params = model.params()
-    # optimizer = AdamOptimizer(lr=0.01, beta1=0.95, beta2=0.99, batch_size=32, num_epochs=2)
-    # optimizer.set_loss(categoricalCrossEntropy)
-    # optimizer.addCallbacks([DumpModelCallback(save_path='params.pkl')])  # object-oriented style
-    # optimizer.setFrequency(1)  # every x-th epoch
+    optimizer = AdamOptimizer(num_classes=num_classes, img_dim=img_dim)
+    optimizer.set_loss(categoricalCrossEntropy)
+    optimizer.addCallbacks({DumpModelPickleCallback.get_name(): DumpModelPickleCallback(save_path=save_path)})
+    optimizer.setFrequency(1)  # execute callbacks every n-th epoch
 
-    # model.set_optimizer(adamGD)
+    model.set_optimizer(optimizer)
 
-    # cost = model.train(train_data)
+    return model
 
-    cost = []
 
-    print("LR:" + str(lr) + ", Batch Size:" + str(batch_size))
+def train(model, img_dim):  # TODO: refactor this to look more appropiate
+    # TODO: check how Pytorch uses DataLoader with network
+    dataloader = DataLoader(img_dim)
+    X, y_dash = dataloader.load_data()
 
-    for epoch in range(num_epochs):
-        np.random.shuffle(train_data)
-        batches = [train_data[k:k + batch_size] for k in range(0, train_data.shape[0], batch_size)]
+    train_data = np.hstack((X, y_dash))
+    np.random.shuffle(train_data)
 
-        t = tqdm(batches)
-        for x, batch in enumerate(t):
-            # params, cost = adamGD(batch, num_classes, lr, img_dim, img_depth, beta1, beta2, params, cost)
-            params, cost = adamGD(batch, num_classes, lr, img_dim, img_depth, beta1, beta2, model, cost)
-            # TODO: this should be refactored to be in a better place
-
-            t.set_description("Cost: %.2f" % (cost[-1]))
-
-    to_save = [params, cost]
-
-    # TODO: save callback - we need a dumper strategy
-    with open(save_path, 'wb') as file:
-        pickle.dump(to_save, file)
-
+    cost = model.train(train_data)
     return cost

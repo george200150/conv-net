@@ -4,13 +4,8 @@ from CNN.network import *
 from CNN.utils import *
 
 from tqdm import tqdm
-import argparse
 import matplotlib.pyplot as plt
 import pickle
-
-parser = argparse.ArgumentParser(description='Train a convolutional neural network.')
-parser.add_argument('--save_path', default="C:/Users/George/Downloads/repos/Numpy-CNN/output/output.txt",
-                    metavar='Save Path', help='name of file to save parameters in.')
 
 
 def fix_seeds():
@@ -22,12 +17,13 @@ def fix_seeds():
 if __name__ == '__main__':
     fix_seeds()
 
-    args = parser.parse_args()
-    save_path = args.save_path
+    num_classes = 10
+    img_dim = 28
+    img_depth = 1
+    save_path = "C:/Users/George/Downloads/repos/Numpy-CNN/output/output.txt"
 
-    # TODO: check how Pytorch uses DataLoader with network
-
-    cost = train(save_path=save_path)
+    model = build_model(num_classes=num_classes, img_dim=img_dim, img_depth=img_depth, save_path=save_path)
+    _ = train(model, img_dim)
 
     params, cost = pickle.load(open(save_path, 'rb'))  # TODO: remove hardcoded layers
     [f1, f2, _, _, w3, w4, b1, b2, _, _, b3, b4] = params
