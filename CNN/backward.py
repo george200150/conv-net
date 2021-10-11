@@ -2,7 +2,6 @@ import numpy as np
 from CNN.functions import nanargmax
 
 
-# TODO: refactor: merge convolutionBackward & maxpoolBackward in the same function
 def convolutionBackward(dconv_prev, input_image_matrix, kernel_weights_matrix, stride):
     """
     Backpropagation through a convolutional layer.
@@ -21,7 +20,6 @@ def convolutionBackward(dconv_prev, input_image_matrix, kernel_weights_matrix, s
     return dout, dfilt, dbias
 
 
-# TODO: refactor: merge convolutionBackward & maxpoolBackward in the same function
 def maxpoolBackward(dpool, input_image_matrix, kernel_size, stride):
     """
     Backpropagation through a maxpooling layer. The gradients are passed through the indices of greatest value in the

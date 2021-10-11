@@ -1,7 +1,7 @@
 import pickle
 import random
 
-from CNN.dataloader import MNISTDataLoader
+from CNN.dataloader import DIODEDataLoader
 from CNN.network import *
 from CNN.utils import *
 
@@ -18,22 +18,24 @@ def fix_seeds():
 if __name__ == '__main__':
     fix_seeds()
 
-    num_classes = 10
-    img_dim_x = 28
-    img_dim_y = 28
-    img_depth = 1
-    train_sample_path = 'train-images-idx3-ubyte.gz'
-    train_label_path = 'train-labels-idx1-ubyte.gz'
-    test_sample_path = 't10k-images-idx3-ubyte.gz'
-    test_label_path = 't10k-labels-idx1-ubyte.gz'
-    save_path = "C:/Users/George/Downloads/repos/conv-net/output/output.txt"
-    no_training_samples = 500  # 50000 max
-    no_testing_samples = 100  # 10000 max
+    num_classes = 2
+
+    # img_dim_x = 512  # 1024 / 2
+    # img_dim_y = 384  # 768 / 2
+    img_dim_x = 64
+    img_dim_y = 48  # 768 / 16
+
+    img_depth = 3
+    save_path = "C:/Users/George/Downloads/repos/conv-net/output/output_DIODE.txt"
+    meta_fname = "C:/datasets/DIODE/diode_meta.json"
+    data_root = "C:/datasets/DIODE/Depth/"
+    num_images_train = 25458
+    num_images_test = 771
     batch_size = 32
 
-    dataloader = MNISTDataLoader(img_dim_x, img_dim_y, train_sample_path, train_label_path, batch_size, no_training_samples)
-    model = build_model(num_classes=num_classes, img_depth=img_depth, img_dim_x=img_dim_x, img_dim_y=img_dim_y,
-                        save_path=save_path)
+    dataloader = DIODEDataLoader(img_dim_x, img_dim_y, meta_fname, data_root, splits=['train'], scene_types=['indoors', 'outdoor'], num_images=num_images_train, batch_size=batch_size)
+    model = build_model_DIODE(num_classes=num_classes, img_depth=img_depth, img_dim_x=img_dim_x, img_dim_y=img_dim_y, batch_size=batch_size, save_path=save_path)
+
     cost = train(model, dataloader)
 
     data_file = open(save_path, 'rb')
@@ -41,7 +43,7 @@ if __name__ == '__main__':
     data_file.close()
     model.load_model(parameter_list)
 
-    # Plot cost 
+    # Plot cost
     plt.plot(cost, 'r')
     plt.xlabel('# Iterations')
     plt.ylabel('Cost')
@@ -49,15 +51,16 @@ if __name__ == '__main__':
     plt.show()
 
     # Get test data
+    dataloader = DIODEDataLoader(img_dim_x, img_dim_y, meta_fname, data_root, splits=['val'], scene_types=['indoors', 'outdoor'], num_images=num_images_test)
     test_data = dataloader.load_data()
 
     X = test_data[:, 0:-1]
-    X = X.reshape(len(test_data), 1, 28, 28)
+    X = X.reshape(len(test_data), img_depth, img_dim_x, img_dim_y)
     y = test_data[:, -1]
 
     corr = 0
-    digit_count = [0 for i in range(10)]
-    digit_correct = [0 for i in range(10)]
+    digit_count = [0 for i in range(num_classes)]
+    digit_correct = [0 for i in range(num_classes)]
 
     print()
     print("Computing accuracy over test set:")
@@ -77,7 +80,7 @@ if __name__ == '__main__':
         t.set_description("Acc:%0.2f%%" % (float(corr / (i + 1)) * 100))
 
     print("Overall Accuracy: %.2f" % (float(corr / len(test_data) * 100)))
-    x = np.arange(10)
+    x = np.arange(num_classes)
     digit_recall = [safe_division(good, total) for good, total in zip(digit_correct, digit_count)]
     plt.xlabel('Digits')
     plt.ylabel('Recall')

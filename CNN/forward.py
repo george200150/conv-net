@@ -1,7 +1,6 @@
 import numpy as np
 
 
-# TODO: refactor: merge convolution & maxpool in the same function
 def convolution(input_image_matrix, kernel_weights_matrix, bias, stride=1):
     """
     Convolve `kernel_weights_matrix` over `input_image_matrix` using stride `stride`
@@ -24,8 +23,7 @@ def convolution(input_image_matrix, kernel_weights_matrix, bias, stride=1):
     return output_matrix
 
 
-# TODO: refactor: merge convolution & maxpool in the same function
-def maxpool(input_image_matrix, kernel_size=2, stride=2, kernel_weights_matrix=None, bias=None):
+def maxpool(input_image_matrix, kernel_size=2, stride=2):
     """
     Downsample `image` using kernel size `f` and stride `s`
     """

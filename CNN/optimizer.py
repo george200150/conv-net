@@ -4,10 +4,11 @@ import numpy as np
 
 
 class AdamOptimizer:
-    def __init__(self, num_classes=10, img_dim=28, img_depth=1, lr=0.01, beta1=0.95, beta2=0.99, batch_size=32,
-                 num_epochs=2):
+    def __init__(self, num_classes=10, img_depth=1, img_dim_x=28, img_dim_y=28, lr=0.01, beta1=0.95, beta2=0.99,
+                 batch_size=32, num_epochs=5):
         self.num_classes = num_classes
-        self.img_dim = img_dim
+        self.img_dim_x = img_dim_x
+        self.img_dim_y = img_dim_y
         self.img_depth = img_depth
         self.lr = lr
         self.beta1 = beta1
@@ -27,29 +28,35 @@ class AdamOptimizer:
     def setFrequency(self, freq):
         self.frequency = freq
 
-    def train(self, model, train_data):
+    def train(self, model, dataloader):
+        # train_data = dataloader.load_data(m, train_sample_path, train_label_path)
+        # np.random.shuffle(train_data)  # TODO: shuffle meta for loading data instead of loading all data to shuffle
+
         cost = []
 
         print("LR:" + str(self.lr) + ", Batch Size:" + str(self.batch_size))
 
         for indx, epoch in enumerate(range(self.num_epochs)):
-            np.random.shuffle(train_data)
-            batches = [train_data[k:k + self.batch_size] for k in range(0, train_data.shape[0], self.batch_size)]
+            # np.random.shuffle(train_data)  # TODO: need data shuffle every epoch ???
 
+            batches = range(dataloader.no_batches)  # TODO: create getter
             t = tqdm(batches)
-            for x, batch in enumerate(t):
-                params, cost = self.adamGD(batch, self.num_classes, self.img_dim, self.img_depth, model, cost)
-                # TODO: this should be refactored to be in a better place
+
+            for _ in t:
+                batch = dataloader.load_batch()
+                params, cost = self.adamGD(batch, self.num_classes, self.img_dim_x, self.img_dim_y, self.img_depth, model, cost)
 
                 t.set_description("Cost: %.2f" % (cost[-1]))
 
-        if indx % self.frequency == 0:  # TODO: should include more callbacks
-            to_save = [params, cost]
-            self.callbacks["SaveModel"](to_save)
+            dataloader.reset_iterator()
+            if indx % self.frequency == 0:  # TODO: should include more callbacks (evaluation metrics)
+                print("Saving model...")
+                to_save = [model.params(), cost]
+                self.callbacks["SaveModel"](to_save)
 
         return cost
 
-    def adamGD(self, batch, num_classes, dim, n_c, model, cost):
+    def adamGD(self, batch, num_classes, dim_x, dim_y, n_c, model, cost):
         lr = self.lr
         beta1 = self.beta1
         beta2 = self.beta2
@@ -58,7 +65,7 @@ class AdamOptimizer:
         """
         global grads
         X = batch[:, 0:-1]  # get batch inputs
-        X = X.reshape(len(batch), n_c, dim, dim)  # TODO: change with (dim_x, dim_y)
+        X = X.reshape(len(batch), n_c, dim_x, dim_y)
         Y = batch[:, -1]  # get batch labels
 
         cost_ = 0
@@ -84,7 +91,8 @@ class AdamOptimizer:
             y = np.eye(num_classes)[int(Y[i])].reshape(num_classes, 1)  # convert label to one-hot
 
             # Collect Gradients for training example
-            probs, feed_results = model.full_forward(x)
+            feed_results = model.full_forward(x)
+            probs = feed_results[-1]
             loss_value = self.loss(probs, y)  # categorical cross-entropy loss value
             grads_w, grads_b = model.full_backprop(probs, y, feed_results)
 
